@@ -237,11 +237,13 @@
     <script>
       const $ = (id) => document.getElementById(id);
 
+      let msgTimer = null;
       function setMsg(text, kind) {
         const el = $('msg');
         el.textContent = text;
         el.className = 'badge ' + (kind === 'ok' ? 'badge-ok' : kind === 'err' ? 'badge-err' : 'badge-warn');
-        if (text) setTimeout(() => { el.textContent = ''; el.className = 'status'; }, 4000);
+        clearTimeout(msgTimer); // a stale timer must not wipe a newer message
+        if (text) msgTimer = setTimeout(() => { el.textContent = ''; el.className = 'status'; }, 4000);
       }
 
       function appendLog(entry) {
@@ -272,7 +274,9 @@
         st.className = 'status' + (linked ? ' linked' : '');
         $('steamLogin').textContent = linked ? 'Перепривязать' : 'Войти через Steam';
         $('resoUnlink').style.display = linked ? '' : 'none';
-        $('resoBackfill').disabled = !linked;
+        // While a backfill runs, per-replay events call refresh() — keep the
+        // button locked or a second click would start a concurrent run.
+        $('resoBackfill').disabled = !linked || backfillBusy;
         $('resoBackfill').title = linked ? '' : 'Сначала свяжи аккаунт по Steam';
         renderStats(s.stats);
         $('log').textContent = '';
@@ -306,13 +310,15 @@
         refresh();
       };
 
+      let backfillBusy = false;
       $('resoBackfill').onclick = async () => {
+        if (backfillBusy) return;
         const days = Number($('resoRange').value) || 0;
         const label = days === 0 ? 'все локальные реплеи' : `матчи за последние ${days} дн.`;
         if (!confirm(`Залить ${label} на reso.coach? Может занять несколько минут.`)) return;
+        backfillBusy = true;
         $('resoBackfill').disabled = true;
         $('resoRange').disabled = true;
-        const orig = $('resoBackfill').textContent;
         $('resoBackfill').textContent = 'Заливаю…';
         try {
           const r = await window.api.reparseFolder({ days });
@@ -324,9 +330,12 @@
               `Готово: ${r.ok_count}/${r.total} загружено${r.fail_count ? `, ${r.fail_count} с ошибкой` : ''}`,
               r.fail_count ? 'warn' : 'ok',
             );
+        } catch (e) {
+          setMsg(`Ошибка: ${e.message || e}`, 'err');
         } finally {
+          backfillBusy = false;
           $('resoRange').disabled = false;
-          $('resoBackfill').textContent = orig;
+          $('resoBackfill').textContent = 'Залить мои матчи';
           refresh();
         }
       };

@@ -10,13 +10,16 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeImage } = 
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
+const crypto = require('node:crypto');
 const Store = require('electron-store');
 const { autoUpdater } = require('electron-updater');
 
 const { startWatcher, stopWatcher } = require('./file-watcher');
 const { parseReplay } = require('./parser-runner');
-const { uploadToReso, RESO_DEFAULT_URL } = require('./uploader');
+const { uploadToReso, saveForRetry, retryPending, RESO_DEFAULT_URL } = require('./uploader');
 const { getDotaPath, getReplaysPath } = require('./dota-integration');
+
+const pendingDir = () => path.join(app.getPath('userData'), 'pending');
 
 const store = new Store({
   defaults: {
@@ -122,6 +125,8 @@ function refreshTray() {
 }
 
 // === Replay processing pipeline ===
+// Returns 'uploaded' | 'parse-failed' | 'not-linked' | 'queued' so callers
+// (the backfill loop) can count real successes instead of assuming them.
 async function processReplay(filePath, matchIdHint) {
   pushLog('info', `Парсинг ${path.basename(filePath)} (матч ${matchIdHint ?? '?'})`);
   emit('replay-detected', { filePath, matchId: matchIdHint });
@@ -135,13 +140,13 @@ async function processReplay(filePath, matchIdHint) {
     stats.totalFailures++;
     store.set('totalFailures', stats.totalFailures);
     emit('parse-error', { filePath, error: e.message });
-    return;
+    return 'parse-failed';
   }
 
   const resoToken = store.get('resoToken');
   if (!resoToken) {
     pushLog('warn', 'Аккаунт не связан — нажми «Войти через Steam», чтобы матчи попадали на reso.coach');
-    return;
+    return 'not-linked';
   }
 
   pushLog('info', `Распарсен матч ${parsed.id}; загружаю на reso.coach...`);
@@ -155,12 +160,47 @@ async function processReplay(filePath, matchIdHint) {
     refreshTray();
     pushLog('info', `reso.coach: матч ${parsed.id} загружен ✓`);
     emit('upload-success', { matchId: parsed.id, stats });
+    return 'uploaded';
   } catch (e) {
     stats.totalFailures++;
     store.set('totalFailures', stats.totalFailures);
-    pushLog('error', `Загрузка не удалась: ${e.message}`);
+    // Persist for retry — the watcher never re-emits this .dem, so without
+    // the queue a transient network error would lose the match forever.
+    try {
+      saveForRetry(pendingDir(), parsed);
+      pushLog('error', `Загрузка не удалась: ${e.message} — сохранено, повторю позже`);
+    } catch (persistErr) {
+      pushLog('error', `Загрузка не удалась: ${e.message}; не смог сохранить на повтор: ${persistErr.message}`);
+    }
     emit('upload-error', { matchId: parsed.id, error: e.message });
+    return 'queued';
   }
+}
+
+// Replay pending (failed) uploads. Best-effort; runs on startup and after a
+// successful Steam link.
+function retryPendingUploads(reason) {
+  const resoToken = store.get('resoToken');
+  if (!resoToken) return;
+  retryPending({
+    dir: pendingDir(),
+    resoUrl: store.get('resoUrl'),
+    resoToken,
+    log: (m) => pushLog('info', m),
+  })
+    .then((r) => {
+      if (r.retried > 0) {
+        pushLog('info', `Повтор (${reason}): ${r.succeeded} ок / ${r.failed} нет из ${r.retried}`);
+        if (r.succeeded > 0) {
+          stats.totalUploads += r.succeeded;
+          stats.lastUploadAt = new Date().toISOString();
+          store.set('totalUploads', stats.totalUploads);
+          store.set('lastUploadAt', stats.lastUploadAt);
+          refreshTray();
+        }
+      }
+    })
+    .catch((e) => pushLog('warn', `Повтор не удался: ${e.message}`));
 }
 
 function onNewReplay(filePath, matchId) {
@@ -215,8 +255,14 @@ ipcMain.handle('select-dota-folder', async () => {
 // /link-device in the system browser, and capture the per-user upload token it
 // redirects back with. The web hard-fixes the delivery host to 127.0.0.1, so the
 // token only ever reaches this local server.
+//
+// The `state` nonce binds the callback to THIS login attempt (RFC 8252 §8.9):
+// without it, any local web page could race the 5-minute window with
+// no-cors GETs to 127.0.0.1:<port>/?token=<attacker-token> and fixate a
+// foreign token — silently rerouting the user's replays to a foreign account.
 ipcMain.handle('steam-login', () => {
   const resoUrl = (store.get('resoUrl') || RESO_DEFAULT_URL).replace(/\/+$/, '');
+  const state = crypto.randomBytes(16).toString('hex');
   return new Promise((resolve) => {
     let settled = false;
     let server;
@@ -234,13 +280,27 @@ ipcMain.handle('steam-login', () => {
     };
     server = http.createServer((req, res) => {
       let token = null;
+      let gotState = null;
       try {
-        token = new URL(req.url, 'http://127.0.0.1').searchParams.get('token');
+        const u = new URL(req.url, 'http://127.0.0.1');
+        token = u.searchParams.get('token');
+        gotState = u.searchParams.get('state');
       } catch {
         /* malformed */
       }
       if (!token) {
         res.writeHead(404);
+        res.end();
+        return;
+      }
+      const stateOk =
+        typeof gotState === 'string' &&
+        gotState.length === state.length &&
+        crypto.timingSafeEqual(Buffer.from(gotState), Buffer.from(state));
+      if (!stateOk) {
+        // Foreign/forged callback — refuse, keep the window open for the real one.
+        pushLog('warn', 'reso.coach: отклонён посторонний callback (state mismatch)');
+        res.writeHead(403);
         res.end();
         return;
       }
@@ -251,6 +311,7 @@ ipcMain.handle('steam-login', () => {
       );
       pushLog('info', 'reso.coach: аккаунт связан (Steam)');
       emit('reso-linked', { linked: true });
+      retryPendingUploads('после привязки');
       done({ ok: true });
     });
     server.on('error', (e) => done({ ok: false, error: e.message }));
@@ -258,7 +319,7 @@ ipcMain.handle('steam-login', () => {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address();
       pushLog('info', `reso.coach: открываю Steam-логин (loopback :${port})`);
-      shell.openExternal(`${resoUrl}/link-device?port=${port}`);
+      shell.openExternal(`${resoUrl}/link-device?port=${port}&state=${state}`);
     });
   });
 });
@@ -277,7 +338,9 @@ ipcMain.handle('get-stats', () => stats);
 // Sequential, not parallel — parser binary uses ~100MB RAM per spawn and
 // network upload chains. Emits `reparse-progress` events so the UI can
 // show "X / N done".
+let backfillRunning = false;
 ipcMain.handle('reparse-folder', async (_evt, opts) => {
+  if (backfillRunning) return { ok: false, error: 'Заливка уже идёт' };
   const dotaPath = store.get('dotaPath');
   if (!dotaPath) return { ok: false, error: 'Папка Dota 2 не задана' };
   const replaysPath = getReplaysPath(dotaPath);
@@ -309,18 +372,26 @@ ipcMain.handle('reparse-folder', async (_evt, opts) => {
   }
 
   pushLog('info', `Заливка: ${files.length} .dem${days > 0 ? ` (за ${days} дн.)` : ''}`);
+  backfillRunning = true;
   let ok_count = 0;
   let fail_count = 0;
-  for (let i = 0; i < files.length; i++) {
-    const fp = files[i];
-    emit('reparse-progress', { current: i + 1, total: files.length, file: path.basename(fp) });
-    try {
-      await processReplay(fp, null);
-      ok_count++;
-    } catch (e) {
-      pushLog('error', `Не удалось обработать ${path.basename(fp)}: ${e.message}`);
-      fail_count++;
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const fp = files[i];
+      emit('reparse-progress', { current: i + 1, total: files.length, file: path.basename(fp) });
+      try {
+        // processReplay swallows its own errors and reports an outcome —
+        // only 'uploaded' is a success (queued/parse-failed/not-linked are not).
+        const outcome = await processReplay(fp, null);
+        if (outcome === 'uploaded') ok_count++;
+        else fail_count++;
+      } catch (e) {
+        pushLog('error', `Не удалось обработать ${path.basename(fp)}: ${e.message}`);
+        fail_count++;
+      }
     }
+  } finally {
+    backfillRunning = false;
   }
   emit('reparse-progress', { current: files.length, total: files.length, done: true });
   return { ok: true, total: files.length, ok_count, fail_count };
@@ -422,6 +493,9 @@ app.whenReady().then(() => {
   if (store.get('autoStart')) {
     app.setLoginItemSettings({ openAtLogin: true });
   }
+
+  // Replay uploads that failed last session (best-effort).
+  retryPendingUploads('на старте');
 
   // Check for app updates in the background. Runs once on startup; user can
   // re-trigger from UI. Skipped in dev (autoUpdater throws "not packaged").

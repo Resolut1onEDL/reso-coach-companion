@@ -53,7 +53,7 @@
       ]
     },
     "mac": {
-      "target": "dmg",
+      "target": ["dmg", "zip"],
       "icon": "assets/icon.png",
       "extraResources": [
         {
