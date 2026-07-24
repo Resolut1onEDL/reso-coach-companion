@@ -1,0 +1,82 @@
+{
+  "name": "reso-coach-companion",
+  "version": "0.1.0",
+  "description": "Reso Coach Companion — watches the Dota 2 replays folder, parses .dem locally with a bundled Go binary (manta) and uploads parsed matches to app.reso.coach for coach analysis.",
+  "main": "src/main.js",
+  "parserVersion": "v4.3.1",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder --publish never",
+    "build:win": "electron-builder --win --publish never",
+    "build:mac": "electron-builder --mac --publish never",
+    "postinstall": "node scripts/install-parser.js"
+  },
+  "author": "Resolut1onEDL",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "chokidar": "^3.5.3",
+    "electron-store": "^8.1.0",
+    "electron-updater": "^6.8.3"
+  },
+  "build": {
+    "appId": "coach.reso.companion",
+    "productName": "Reso Coach Companion",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Resolut1onEDL",
+        "repo": "reso-coach-companion",
+        "releaseType": "release"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.png",
+      "extraResources": [
+        {
+          "from": "bin/parser-win-${arch}.exe",
+          "to": "parser.exe"
+        }
+      ]
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.png",
+      "extraResources": [
+        {
+          "from": "bin/parser-mac-${arch}",
+          "to": "parser"
+        }
+      ]
+    },
+    "linux": {
+      "target": "AppImage",
+      "extraResources": [
+        {
+          "from": "bin/parser-linux-${arch}",
+          "to": "parser"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": false,
+      "differentialPackage": true
+    }
+  }
+}
