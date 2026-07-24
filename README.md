@@ -3,14 +3,14 @@
 Desktop companion for [app.reso.coach](https://app.reso.coach) — the Dota 2 AI coach.
 
 Watches your Dota 2 replays folder, parses every `.dem` locally with a bundled
-Go parser and uploads the parsed match to your reso.coach account, where the
+Go parser and uploads the parsed match to your app.reso.coach account, where the
 coach analyzes it. Works for Immortal games that never reach public match
 databases — the replay comes straight from your PC.
 
 ## Features
 
-- **Steam sign-in** — link the app to your reso.coach account in one click
-- **Auto-upload** — every finished match appears on your reso.coach home, ready for analysis
+- **Steam sign-in** — link the app to your app.reso.coach account in one click
+- **Auto-upload** — every finished match appears on your app.reso.coach home, ready for analysis
 - **Backfill** — upload your local replays for the last week / month / all at once
 - **Tray app** — closes to tray, auto-starts with the system, auto-updates
 

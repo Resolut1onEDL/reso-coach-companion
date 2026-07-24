@@ -159,7 +159,7 @@
         </div>
         <div class="small">
           Свяжи аккаунт по Steam — каждый сыгранный матч будет автоматически
-          появляться на главной reso.coach, готовый к разбору. Логин откроется в браузере.
+          появляться на главной app.reso.coach, готовый к разбору. Логин откроется в браузере.
         </div>
         <div class="row" style="margin-top: 10px">
           <button id="steamLogin">Войти через Steam</button>
@@ -172,7 +172,7 @@
       <div class="card">
         <strong style="font-size: 14px">Прошлые матчи</strong>
         <div class="small">
-          Пройдёт по локальным реплеям за период и зальёт их на reso.coach.
+          Пройдёт по локальным реплеям за период и зальёт их на app.reso.coach.
           Immortal-матчей нет в открытых базах — реплей берётся прямо с твоего ПК.
         </div>
         <div class="row" style="margin-top: 10px">
@@ -315,7 +315,7 @@
         if (backfillBusy) return;
         const days = Number($('resoRange').value) || 0;
         const label = days === 0 ? 'все локальные реплеи' : `матчи за последние ${days} дн.`;
-        if (!confirm(`Залить ${label} на reso.coach? Может занять несколько минут.`)) return;
+        if (!confirm(`Залить ${label} на app.reso.coach? Может занять несколько минут.`)) return;
         backfillBusy = true;
         $('resoBackfill').disabled = true;
         $('resoRange').disabled = true;

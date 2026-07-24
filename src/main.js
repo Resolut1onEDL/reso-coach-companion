@@ -145,11 +145,11 @@ async function processReplay(filePath, matchIdHint) {
 
   const resoToken = store.get('resoToken');
   if (!resoToken) {
-    pushLog('warn', 'Аккаунт не связан — нажми «Войти через Steam», чтобы матчи попадали на reso.coach');
+    pushLog('warn', 'Аккаунт не связан — нажми «Войти через Steam», чтобы матчи попадали на app.reso.coach');
     return 'not-linked';
   }
 
-  pushLog('info', `Распарсен матч ${parsed.id}; загружаю на reso.coach...`);
+  pushLog('info', `Распарсен матч ${parsed.id}; загружаю на app.reso.coach...`);
   try {
     await uploadToReso({ parsed, resoUrl: store.get('resoUrl'), resoToken });
     stats.uploadsToday++;
@@ -158,7 +158,7 @@ async function processReplay(filePath, matchIdHint) {
     store.set('totalUploads', stats.totalUploads);
     store.set('lastUploadAt', stats.lastUploadAt);
     refreshTray();
-    pushLog('info', `reso.coach: матч ${parsed.id} загружен ✓`);
+    pushLog('info', `app.reso.coach: матч ${parsed.id} загружен ✓`);
     emit('upload-success', { matchId: parsed.id, stats });
     return 'uploaded';
   } catch (e) {
@@ -299,7 +299,7 @@ ipcMain.handle('steam-login', () => {
         crypto.timingSafeEqual(Buffer.from(gotState), Buffer.from(state));
       if (!stateOk) {
         // Foreign/forged callback — refuse, keep the window open for the real one.
-        pushLog('warn', 'reso.coach: отклонён посторонний callback (state mismatch)');
+        pushLog('warn', 'app.reso.coach: отклонён посторонний callback (state mismatch)');
         res.writeHead(403);
         res.end();
         return;
@@ -307,9 +307,9 @@ ipcMain.handle('steam-login', () => {
       store.set('resoToken', token);
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(
-        '<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;background:#262624;color:#eceae4;text-align:center;padding-top:80px"><h2 style="color:#e06c4c">Готово ✓</h2><p>Аккаунт связан с reso.coach. Можешь закрыть вкладку.</p></body>',
+        '<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;background:#262624;color:#eceae4;text-align:center;padding-top:80px"><h2 style="color:#e06c4c">Готово ✓</h2><p>Аккаунт связан с app.reso.coach. Можешь закрыть вкладку.</p></body>',
       );
-      pushLog('info', 'reso.coach: аккаунт связан (Steam)');
+      pushLog('info', 'app.reso.coach: аккаунт связан (Steam)');
       emit('reso-linked', { linked: true });
       retryPendingUploads('после привязки');
       done({ ok: true });
@@ -318,7 +318,7 @@ ipcMain.handle('steam-login', () => {
     timer = setTimeout(() => done({ ok: false, error: 'timeout' }), 5 * 60 * 1000);
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address();
-      pushLog('info', `reso.coach: открываю Steam-логин (loopback :${port})`);
+      pushLog('info', `app.reso.coach: открываю Steam-логин (loopback :${port})`);
       shell.openExternal(`${resoUrl}/link-device?port=${port}&state=${state}`);
     });
   });
