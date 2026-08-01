@@ -10,6 +10,13 @@
 //
 // Runs on `npm install` (postinstall) and before `npm run build` (electron-
 // builder needs all three platform binaries present at packaging time).
+//
+// SUPPLY-CHAIN RULE (learned the hard way): the local dist-release/ dir is
+// used ONLY when DOTA_PARSER_DIST is set explicitly. The old "local dir
+// first" default shipped stale v4.3.1 binaries inside a build pinned to
+// v4.4.2 — Immortal players then fed 4.3.1 JSON into prod for a week. The
+// pinned GitHub release is the only source that matches the pin by
+// construction.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -26,9 +33,8 @@ if (!version) {
 }
 
 const binDir = path.join(__dirname, '..', 'bin');
-const localDir =
-  process.env.DOTA_PARSER_DIST ||
-  path.resolve(__dirname, '..', '..', 'dota-replay-parser', 'dist-release');
+// Local override is OPT-IN only (see supply-chain rule above).
+const localDir = process.env.DOTA_PARSER_DIST || null;
 fs.mkdirSync(binDir, { recursive: true });
 
 function fetch(url) {
@@ -52,11 +58,14 @@ function fetch(url) {
 
 async function stageOne(name) {
   const dest = path.join(binDir, name);
-  const local = path.join(localDir, name);
-  if (fs.existsSync(local)) {
+  if (localDir) {
+    const local = path.join(localDir, name);
+    if (!fs.existsSync(local)) {
+      throw new Error(`DOTA_PARSER_DIST set but ${local} is missing`);
+    }
     fs.copyFileSync(local, dest);
     fs.chmodSync(dest, 0o755);
-    console.log(`install-parser: ${name} <- ${local} (local)`);
+    console.log(`install-parser: ${name} <- ${local} (DOTA_PARSER_DIST override)`);
     return;
   }
   const url = `https://github.com/${REPO}/releases/download/${version}/${name}`;
