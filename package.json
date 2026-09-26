@@ -1,6 +1,6 @@
 {
   "name": "reso-coach-companion",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Reso Coach Companion — watches the Dota 2 replays folder, parses .dem locally with a bundled Go binary (manta) and uploads parsed matches to app.reso.coach for coach analysis.",
   "main": "src/main.js",
   "parserVersion": "v4.7.2",
