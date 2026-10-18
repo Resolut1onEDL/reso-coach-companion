@@ -288,13 +288,14 @@
           dotaPath: $('dotaPath').value.trim(),
           autoStart: $('autoStart').checked,
         });
-        setMsg(r.ok ? 'Сохранено ✓' : 'Ошибка', r.ok ? 'ok' : 'err');
+        setMsg(r.ok ? 'Сохранено ✓' : r.error || 'Ошибка', r.ok ? 'ok' : 'err');
         refresh();
       };
 
       $('pickDota').onclick = async () => {
         const r = await window.api.selectDotaFolder();
         if (r.ok) { $('dotaPath').value = r.dotaPath; setMsg('Папка выбрана', 'ok'); refresh(); }
+        else if (r.error) setMsg(r.error, 'err');
       };
 
       $('steamLogin').onclick = async () => {

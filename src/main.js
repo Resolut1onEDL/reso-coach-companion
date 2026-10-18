@@ -17,7 +17,7 @@ const { autoUpdater } = require('electron-updater');
 const { startWatcher, stopWatcher } = require('./file-watcher');
 const { parseReplay } = require('./parser-runner');
 const { uploadToReso, saveForRetry, retryPending, RESO_DEFAULT_URL } = require('./uploader');
-const { getDotaPath, getReplaysPath } = require('./dota-integration');
+const { getDotaPath, getReplaysPath, isDotaRoot, resolveDotaPath } = require('./dota-integration');
 
 const pendingDir = () => path.join(app.getPath('userData'), 'pending');
 
@@ -219,19 +219,41 @@ ipcMain.handle('get-settings', () => ({
   log: log.slice(-50),
 }));
 
+const NOT_DOTA_FOLDER = 'Не нашёл Доту в этой папке. Выбери папку «dota 2 beta» или папку реплеев внутри неё.';
+
+function countReplays(dir) {
+  try {
+    return fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.dem')).length;
+  } catch {
+    return 0;
+  }
+}
+
+// Save a validated Dota root and (re)start watching its replays folder.
+function watchDota(dotaPath) {
+  store.set('dotaPath', dotaPath);
+  stopWatcher();
+  const replaysPath = getReplaysPath(dotaPath);
+  startWatcher(replaysPath, onNewReplay);
+  stats.watcherActive = true;
+  refreshTray();
+  pushLog('info', `Папка Доты: ${dotaPath} · реплеи: ${replaysPath} (${countReplays(replaysPath)} .dem)`);
+}
+
 ipcMain.handle('save-settings', (_evt, s) => {
-  if (s.dotaPath !== undefined) store.set('dotaPath', s.dotaPath);
   if (s.autoStart !== undefined) {
     store.set('autoStart', s.autoStart);
     app.setLoginItemSettings({ openAtLogin: !!s.autoStart });
   }
-  // Restart watcher if dotaPath changed
   if (s.dotaPath !== undefined && s.dotaPath) {
-    stopWatcher();
-    const replaysPath = getReplaysPath(s.dotaPath);
-    startWatcher(replaysPath, onNewReplay);
-    stats.watcherActive = true;
-    refreshTray();
+    const dotaPath = resolveDotaPath(s.dotaPath);
+    if (!dotaPath) {
+      pushLog('warn', `В указанной папке нет Доты: ${s.dotaPath}`);
+      return { ok: false, error: NOT_DOTA_FOLDER };
+    }
+    watchDota(dotaPath);
+  } else if (s.dotaPath !== undefined) {
+    store.set('dotaPath', s.dotaPath);
   }
   return { ok: true };
 });
@@ -239,15 +261,16 @@ ipcMain.handle('save-settings', (_evt, s) => {
 ipcMain.handle('select-dota-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
-    title: 'Выбери папку Dota 2 (содержит game/dota/...)',
+    title: 'Выбери папку Dota 2 («dota 2 beta») или папку реплеев',
   });
   if (result.canceled || result.filePaths.length === 0) return { ok: false };
-  const dotaPath = result.filePaths[0];
-  store.set('dotaPath', dotaPath);
-  stopWatcher();
-  startWatcher(getReplaysPath(dotaPath), onNewReplay);
-  stats.watcherActive = true;
-  refreshTray();
+  const picked = result.filePaths[0];
+  const dotaPath = resolveDotaPath(picked);
+  if (!dotaPath) {
+    pushLog('warn', `В выбранной папке нет Доты: ${picked}`);
+    return { ok: false, error: NOT_DOTA_FOLDER };
+  }
+  watchDota(dotaPath);
   return { ok: true, dotaPath };
 });
 
@@ -345,6 +368,7 @@ ipcMain.handle('reparse-folder', async (_evt, opts) => {
   if (!dotaPath) return { ok: false, error: 'Папка Dota 2 не задана' };
   const replaysPath = getReplaysPath(dotaPath);
   if (!fs.existsSync(replaysPath)) {
+    pushLog('warn', `Заливка: папка реплеев не найдена: ${replaysPath}`);
     return { ok: false, error: `Папка реплеев не найдена: ${replaysPath}` };
   }
 
@@ -368,6 +392,7 @@ ipcMain.handle('reparse-folder', async (_evt, opts) => {
     });
 
   if (files.length === 0) {
+    pushLog('info', `Заливка: нет .dem${days > 0 ? ` за ${days} дн.` : ''} в ${replaysPath}`);
     return { ok: true, total: 0, ok_count: 0, fail_count: 0 };
   }
 
@@ -394,6 +419,7 @@ ipcMain.handle('reparse-folder', async (_evt, opts) => {
     backfillRunning = false;
   }
   emit('reparse-progress', { current: files.length, total: files.length, done: true });
+  pushLog(fail_count ? 'warn' : 'info', `Заливка готова: загружено ${ok_count} из ${files.length}`);
   return { ok: true, total: files.length, ok_count, fail_count };
 });
 
@@ -472,8 +498,18 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
 
-  // Auto-detect Dota path if not set
+  // Repair a saved folder that is not the Dota root: up to 0.1.13 a picked
+  // folder was saved as-is (e.g. the replays folder) and an empty one watched.
   let dotaPath = store.get('dotaPath');
+  if (dotaPath && !isDotaRoot(dotaPath)) {
+    const fixed = resolveDotaPath(dotaPath);
+    if (fixed) pushLog('info', `Папка Доты исправлена: ${dotaPath} → ${fixed}`);
+    else pushLog('warn', `В сохранённой папке нет Доты: ${dotaPath}`);
+    dotaPath = fixed || '';
+    store.set('dotaPath', dotaPath);
+  }
+
+  // Auto-detect Dota path if not set
   if (!dotaPath) {
     dotaPath = getDotaPath();
     if (dotaPath) {
@@ -484,11 +520,7 @@ app.whenReady().then(() => {
     }
   }
 
-  if (dotaPath) {
-    const replaysPath = getReplaysPath(dotaPath);
-    startWatcher(replaysPath, onNewReplay);
-    stats.watcherActive = true;
-  }
+  if (dotaPath) watchDota(dotaPath);
 
   if (store.get('autoStart')) {
     app.setLoginItemSettings({ openAtLogin: true });

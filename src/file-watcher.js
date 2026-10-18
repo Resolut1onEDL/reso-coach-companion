@@ -22,11 +22,12 @@ function startWatcher(replaysPath, onNewReplay) {
     stopWatcher();
   }
 
-  // Check if path exists
+  // Check if path exists. Non-recursive: only the last folder (replays) is
+  // created, inside an existing game/dota — never a new tree in a wrong folder.
   if (!fs.existsSync(replaysPath)) {
     console.log(`[Watcher] Creating replays directory: ${replaysPath}`);
     try {
-      fs.mkdirSync(replaysPath, { recursive: true });
+      fs.mkdirSync(replaysPath);
     } catch (error) {
       console.error(`[Watcher] Failed to create directory:`, error);
     }

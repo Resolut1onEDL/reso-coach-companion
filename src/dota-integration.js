@@ -45,4 +45,28 @@ function getReplaysPath(dotaPath) {
   return path.join(dotaPath, 'game', 'dota', 'replays');
 }
 
-module.exports = { getDotaPath, getReplaysPath };
+function isDotaRoot(p) {
+  return !!p && fs.existsSync(path.join(p, 'game', 'dota', 'gameinfo.gi'));
+}
+
+// A folder the user picked → the Dota install root («dota 2 beta»), or null.
+// Accepts the root itself, a folder inside it (game, game/dota, the replays
+// folder game/dota/replays) and a Steam library folder above it.
+function resolveDotaPath(picked) {
+  if (!picked) return null;
+  const start = path.resolve(picked);
+  let p = start;
+  for (let i = 0; i < 4; i++) {
+    if (isDotaRoot(p)) return p;
+    const up = path.dirname(p);
+    if (up === p) break;
+    p = up;
+  }
+  for (const sub of [['dota 2 beta'], ['common', 'dota 2 beta'], ['steamapps', 'common', 'dota 2 beta']]) {
+    const candidate = path.join(start, ...sub);
+    if (isDotaRoot(candidate)) return candidate;
+  }
+  return null;
+}
+
+module.exports = { getDotaPath, getReplaysPath, isDotaRoot, resolveDotaPath };
