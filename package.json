@@ -1,12 +1,13 @@
 {
   "name": "reso-coach-companion",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Reso Coach Companion — watches the Dota 2 replays folder, parses .dem locally with a bundled Go binary (manta) and uploads parsed matches to app.reso.coach for coach analysis.",
   "main": "src/main.js",
-  "parserVersion": "v4.10.2",
+  "parserVersion": "v4.14.0",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "test": "node --test test/*.test.js",
     "build": "electron-builder --publish never",
     "build:win": "electron-builder --win --publish never",
     "build:mac": "electron-builder --mac --publish never",
