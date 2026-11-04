@@ -6,7 +6,7 @@
 //   3. Start file-watcher on Dota replays folder (chokidar)
 //   4. On new .dem detected → parser-runner → upload to app.reso.coach → log + IPC event
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell, nativeImage, Notification } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -18,6 +18,7 @@ const { startWatcher, stopWatcher } = require('./file-watcher');
 const { parseReplay } = require('./parser-runner');
 const { uploadToReso, saveForRetry, retryPending, RESO_DEFAULT_URL } = require('./uploader');
 const { getDotaPath, getReplaysPath, isDotaRoot, resolveDotaPath } = require('./dota-integration');
+const { nudgeText, isDotaRunning, createNudge } = require('./update-nudge');
 
 const pendingDir = () => path.join(app.getPath('userData'), 'pending');
 
@@ -86,7 +87,9 @@ function createWindow() {
 }
 
 function buildTrayMenu() {
+  const pendingVersion = nudge.pendingVersion;
   return Menu.buildFromTemplate([
+    ...(pendingVersion ? [{ label: `Обновить до ${pendingVersion}`, click: installUpdate }, { type: 'separator' }] : []),
     { label: 'Открыть', click: () => mainWindow && mainWindow.show() },
     { type: 'separator' },
     { label: `Загружено сегодня: ${stats.uploadsToday}`, enabled: false },
@@ -437,6 +440,70 @@ let updateState = { state: 'idle', version: null, progress: null, error: null };
 function setUpdateState(patch) {
   updateState = { ...updateState, ...patch };
   emit('update-status', updateState);
+  nudge.onUpdate(updateState);
+  refreshTray();
+  if (updateState.state === 'downloaded' && installWhenReady) installUpdate();
+}
+
+const RELEASES_URL = 'https://github.com/Resolut1onEDL/reso-coach-companion/releases/latest';
+const UPDATE_CHECK_EVERY_MS = 3 * 60 * 60 * 1000;
+const DOTA_POLL_EVERY_MS = 60 * 1000;
+const RECHECK_ON_DOTA_AFTER_MS = 10 * 60 * 1000;
+let installWhenReady = false;
+let lastUpdateCheckAt = 0;
+let updateNotification = null; // held so it is not garbage-collected before a click
+
+const nudge = createNudge({ notify: showUpdateNotification });
+
+function checkForUpdatesInBackground(reason) {
+  if (!app.isPackaged) return;
+  if (updateState.state === 'downloading' || updateState.state === 'downloaded') return;
+  lastUpdateCheckAt = Date.now();
+  autoUpdater.checkForUpdates().catch((e) => pushLog('warn', `update check failed (${reason}): ${e.message}`));
+}
+
+// «Обновить»: restart into the downloaded version, or install the moment the
+// download finishes. Unsigned Mac builds cannot self-install — open the page.
+function installUpdate() {
+  if (!app.isPackaged) return;
+  if (process.platform === 'darwin') {
+    shell.openExternal(RELEASES_URL);
+    return;
+  }
+  if (updateState.state === 'downloaded') {
+    pushLog('info', `Ставлю обновление ${updateState.version}`);
+    isQuitting = true;
+    setImmediate(() => autoUpdater.quitAndInstall(true, true));
+    return;
+  }
+  installWhenReady = true;
+  if (mainWindow) mainWindow.show();
+  if (updateState.state !== 'downloading') {
+    autoUpdater.checkForUpdates().catch((e) => pushLog('warn', `update check failed: ${e.message}`));
+  }
+}
+
+function showUpdateNotification(version) {
+  if (!Notification.isSupported()) return;
+  const { title, body, action } = nudgeText(version, process.platform);
+  updateNotification = new Notification({
+    title,
+    body,
+    actions: process.platform === 'darwin' ? [{ type: 'button', text: action }] : [],
+    urgency: 'critical',
+    timeoutType: 'never',
+  });
+  updateNotification.on('click', installUpdate);
+  updateNotification.on('action', installUpdate);
+  updateNotification.show();
+  pushLog('info', `Уведомление: нужно обновить до ${version}`);
+}
+
+async function pollDota() {
+  const started = nudge.onDota(await isDotaRunning());
+  if (started && Date.now() - lastUpdateCheckAt > RECHECK_ON_DOTA_AFTER_MS) {
+    checkForUpdatesInBackground('Дота запущена');
+  }
 }
 
 if (app.isPackaged) {
@@ -471,6 +538,7 @@ ipcMain.handle('quit-and-install', () => {
   if (!app.isPackaged) return { ok: false, error: 'dev build' };
   if (updateState.state !== 'downloaded') return { ok: false, error: 'no update ready' };
   // setImmediate so the IPC reply lands before the app shuts down
+  isQuitting = true;
   setImmediate(() => autoUpdater.quitAndInstall());
   return { ok: true };
 });
@@ -495,6 +563,8 @@ if (!gotLock) {
 }
 
 app.whenReady().then(() => {
+  // Windows routes toast clicks to the app only under its AppUserModelID.
+  if (process.platform === 'win32') app.setAppUserModelId('coach.reso.companion');
   createWindow();
   createTray();
 
@@ -529,10 +599,14 @@ app.whenReady().then(() => {
   // Replay uploads that failed last session (best-effort).
   retryPendingUploads('на старте');
 
-  // Check for app updates in the background. Runs once on startup; user can
-  // re-trigger from UI. Skipped in dev (autoUpdater throws "not packaged").
+  // Check for app updates at start, every 3 hours and when Dota starts; a
+  // pending update is announced when the player sits down to play. Skipped in
+  // dev (autoUpdater throws "not packaged").
   if (app.isPackaged) {
-    autoUpdater.checkForUpdates().catch((e) => pushLog('warn', `update check failed: ${e.message}`));
+    checkForUpdatesInBackground('на старте');
+    setInterval(() => checkForUpdatesInBackground('по расписанию'), UPDATE_CHECK_EVERY_MS);
+    pollDota();
+    setInterval(pollDota, DOTA_POLL_EVERY_MS);
   }
 });
 
