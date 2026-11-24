@@ -19,7 +19,7 @@ const { startWatcher, stopWatcher } = require('./file-watcher');
 const { parseReplay } = require('./parser-runner');
 const { uploadToReso, saveForRetry, retryPending, RESO_DEFAULT_URL } = require('./uploader');
 const { findDota, getReplaysPath, isDotaRoot, resolveDotaPath } = require('./dota-integration');
-const { nudgeText, isDotaRunning, createNudge } = require('./update-nudge');
+const { nudgeText, isDotaRunning, createNudge, selfInstalls } = require('./update-nudge');
 const { buildReport, createReporter, sendReport } = require('./report');
 
 const pendingDir = () => path.join(app.getPath('userData'), 'pending');
@@ -479,7 +479,9 @@ ipcMain.handle('reparse-folder', async (_evt, opts) => {
 // Status lifecycle (state field): idle → checking → available → downloading
 // → downloaded → (user clicks restart) → quitAndInstall.
 // `not-available` and `error` are terminal until next manual check.
-let updateState = { state: 'idle', version: null, progress: null, error: null };
+// manual: a Mac — its update is not downloaded, the card offers «Скачать» (the release page)
+const SELF_INSTALLS = selfInstalls(process.platform);
+let updateState = { state: 'idle', version: null, progress: null, error: null, manual: !SELF_INSTALLS };
 
 function setUpdateState(patch) {
   updateState = { ...updateState, ...patch };
@@ -551,8 +553,8 @@ async function pollDota() {
 }
 
 if (app.isPackaged) {
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoDownload = SELF_INSTALLS;
+  autoUpdater.autoInstallOnAppQuit = SELF_INSTALLS;
   autoUpdater.logger = { info: (m) => pushLog('info', `update: ${m}`),
                          warn: (m) => pushLog('warn', `update: ${m}`),
                          error: (m) => pushLog('error', `update: ${m}`),
@@ -580,6 +582,7 @@ ipcMain.handle('check-for-updates', async () => {
 
 ipcMain.handle('quit-and-install', () => {
   if (!app.isPackaged) return { ok: false, error: 'dev build' };
+  if (!SELF_INSTALLS) { installUpdate(); return { ok: true }; } // a Mac: the release page
   if (updateState.state !== 'downloaded') return { ok: false, error: 'no update ready' };
   // setImmediate so the IPC reply lands before the app shuts down
   isQuitting = true;

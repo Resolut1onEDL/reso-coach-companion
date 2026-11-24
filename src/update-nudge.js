@@ -9,6 +9,12 @@ const { execFile } = require('node:child_process');
 
 const PENDING_STATES = new Set(['available', 'downloading', 'downloaded']);
 
+// Unsigned Mac builds: Squirrel.Mac refuses to install their update, so a Mac never downloads one — its card and
+// nudge open the release page instead (specs/2026-11-24-mac-update-download.md).
+function selfInstalls(platform) {
+  return platform !== 'darwin';
+}
+
 function nudgeText(version, platform) {
   return {
     title: 'Обнови компаньон',
@@ -67,4 +73,4 @@ function createNudge({ notify }) {
   };
 }
 
-module.exports = { nudgeText, dotaProcessCommand, dotaInOutput, isDotaRunning, createNudge, PENDING_STATES };
+module.exports = { nudgeText, dotaProcessCommand, dotaInOutput, isDotaRunning, createNudge, selfInstalls, PENDING_STATES };

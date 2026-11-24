@@ -371,10 +371,12 @@
         installBtn.style.display = 'none';
         switch (s.state) {
           case 'checking':       status.textContent = 'проверка…'; break;
-          case 'available':      status.textContent = `доступна v${s.version} — скачивается…`; break;
+          // a Mac does not download it: «Скачать» opens the release page
+          case 'available':      status.textContent = s.manual ? `доступна v${s.version}` : `доступна v${s.version} — скачивается…`;
+                                 if (s.manual) { installBtn.textContent = 'Скачать'; installBtn.style.display = 'inline-block'; } break;
           case 'downloading':    status.textContent = `загрузка ${s.progress ?? 0}%`; break;
           case 'downloaded':     status.textContent = `v${s.version} готова — перезапустить?`;
-                                 installBtn.style.display = 'inline-block'; break;
+                                 installBtn.textContent = 'Перезапустить и установить'; installBtn.style.display = 'inline-block'; break;
           case 'not-available':  status.textContent = `установлена последняя (${s.version ?? ''})`; break;
           case 'error':          status.textContent = `ошибка: ${s.error}`; break;
           default:               status.textContent = s.state;

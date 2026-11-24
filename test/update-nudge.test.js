@@ -4,7 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { nudgeText, dotaInOutput, createNudge } = require('../src/update-nudge');
+const { nudgeText, dotaInOutput, createNudge, selfInstalls } = require('../src/update-nudge');
 
 function setup() {
   const shown = [];
@@ -67,4 +67,12 @@ test('the copy is the founder\'s short version', () => {
     action: 'Обновить',
   });
   assert.match(nudgeText('0.1.16', 'darwin').body, /чтобы скачать\.$/);
+});
+
+// specs/2026-11-24-mac-update-download.md: Squirrel.Mac refuses an unsigned update, so a Mac never downloads one —
+// its card offers «Скачать» (the release page) instead of the signature error.
+test('a Mac does not download its update itself; Windows and Linux do', () => {
+  assert.equal(selfInstalls('darwin'), false);
+  assert.equal(selfInstalls('win32'), true);
+  assert.equal(selfInstalls('linux'), true);
 });
