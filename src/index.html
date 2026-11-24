@@ -168,6 +168,15 @@
         </div>
       </div>
 
+      <!-- Dota not found (hidden once a folder is set) -->
+      <div class="card" id="dotaCard" style="display: none">
+        <strong style="font-size: 14px">Не нашёл Доту</strong>
+        <div class="small">Выбери папку «dota 2 beta». В Steam: Dota 2 → Управление → Просмотреть локальные файлы.</div>
+        <div class="row" style="margin-top: 10px">
+          <button id="pickDotaCard">Выбрать папку</button>
+        </div>
+      </div>
+
       <!-- Backfill -->
       <div class="card">
         <strong style="font-size: 14px">Прошлые матчи</strong>
@@ -232,6 +241,8 @@
         <summary>Лог событий</summary>
         <pre class="log" id="log"></pre>
       </details>
+
+      <div class="small" style="text-align: center">Чтобы чинить ошибки, компаньон отправляет свой лог в ResoAI</div>
     </div>
 
     <script>
@@ -267,6 +278,7 @@
       async function refresh() {
         const s = await window.api.getSettings();
         $('dotaPath').value = s.dotaPath || '';
+        $('dotaCard').style.display = s.dotaPath ? 'none' : '';
         $('autoStart').checked = !!s.autoStart;
         const linked = !!s.resoLinked;
         const st = $('resoStatus');
@@ -292,7 +304,7 @@
         refresh();
       };
 
-      $('pickDota').onclick = async () => {
+      $('pickDota').onclick = $('pickDotaCard').onclick = async () => {
         const r = await window.api.selectDotaFolder();
         if (r.ok) { $('dotaPath').value = r.dotaPath; setMsg('Папка выбрана', 'ok'); refresh(); }
         else if (r.error) setMsg(r.error, 'err');

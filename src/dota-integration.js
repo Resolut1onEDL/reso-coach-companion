@@ -1,10 +1,11 @@
 // Dota 2 install path detection + replays folder resolution.
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
-function commonDotaPaths() {
-  if (process.platform === 'win32') {
+function commonDotaPaths(platform = process.platform, home = process.env.HOME || '') {
+  if (platform === 'win32') {
     return [
       'C:\\Program Files (x86)\\Steam\\steamapps\\common\\dota 2 beta',
       'C:\\Program Files\\Steam\\steamapps\\common\\dota 2 beta',
@@ -16,29 +17,87 @@ function commonDotaPaths() {
       'F:\\SteamLibrary\\steamapps\\common\\dota 2 beta',
     ];
   }
-  if (process.platform === 'darwin') {
+  if (platform === 'darwin') {
     return [
-      path.join(
-        process.env.HOME || '',
-        'Library/Application Support/Steam/steamapps/common/dota 2 beta',
-      ),
+      path.posix.join(home, 'Library/Application Support/Steam/steamapps/common/dota 2 beta'),
     ];
   }
   // linux
   return [
-    path.join(process.env.HOME || '', '.steam/steam/steamapps/common/dota 2 beta'),
-    path.join(process.env.HOME || '', '.local/share/Steam/steamapps/common/dota 2 beta'),
+    path.posix.join(home, '.steam/steam/steamapps/common/dota 2 beta'),
+    path.posix.join(home, '.local/share/Steam/steamapps/common/dota 2 beta'),
   ];
 }
 
-function getDotaPath() {
-  for (const p of commonDotaPaths()) {
-    if (!p) continue;
-    if (fs.existsSync(p) && fs.existsSync(path.join(p, 'game', 'dota', 'gameinfo.gi'))) {
-      return p;
+// Where Steam itself lives by default; its steamapps/libraryfolders.vdf lists
+// every library folder (an external disk, a second drive), Dota can be in any.
+function steamRoots(platform, home) {
+  if (platform === 'win32') return ['C:\\Program Files (x86)\\Steam', 'C:\\Program Files\\Steam'];
+  if (platform === 'darwin') return [path.posix.join(home, 'Library/Application Support/Steam')];
+  return [
+    path.posix.join(home, '.steam/steam'),
+    path.posix.join(home, '.local/share/Steam'),
+    path.posix.join(home, '.var/app/com.valvesoftware.Steam/.local/share/Steam'),
+  ];
+}
+
+// Every `"path"  "<lib>"` entry of a libraryfolders.vdf, unescaped.
+function libraryPaths(vdf) {
+  const out = [];
+  const re = /"path"\s+"((?:[^"\\]|\\.)*)"/gi;
+  let m;
+  while ((m = re.exec(vdf))) out.push(m[1].replace(/\\(.)/g, '$1'));
+  return out;
+}
+
+// Search Dota in the fixed places and in every Steam library. Returns the
+// first Dota root and every place checked (for the diagnostics report).
+function findDota({
+  platform = process.platform,
+  home = os.homedir(),
+  exists = fs.existsSync,
+  readFile = fs.readFileSync,
+} = {}) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const looked = [];
+  const libraryDirs = [];
+  for (const root of steamRoots(platform, home)) {
+    const vdf = p.join(root, 'steamapps', 'libraryfolders.vdf');
+    let found = false;
+    try {
+      found = !!exists(vdf);
+      if (found) libraryDirs.push(...libraryPaths(String(readFile(vdf, 'utf8'))));
+    } catch {
+      /* unreadable vdf: the fixed places still get checked */
     }
+    looked.push({ path: vdf, exists: found, dota: false });
   }
-  return null;
+  const candidates = [
+    ...commonDotaPaths(platform, home),
+    ...libraryDirs.map((lib) => p.join(lib, 'steamapps', 'common', 'dota 2 beta')),
+  ];
+  const seen = new Set();
+  let dotaPath = null;
+  for (const c of candidates) {
+    const key = platform === 'win32' ? c.toLowerCase().replace(/\//g, '\\') : c;
+    if (!c || seen.has(key)) continue;
+    seen.add(key);
+    let there = false;
+    let dota = false;
+    try {
+      there = !!exists(c);
+      dota = there && !!exists(p.join(c, 'game', 'dota', 'gameinfo.gi'));
+    } catch {
+      /* treat as missing */
+    }
+    looked.push({ path: c, exists: there, dota });
+    if (dota && !dotaPath) dotaPath = c;
+  }
+  return { path: dotaPath, looked };
+}
+
+function getDotaPath() {
+  return findDota().path;
 }
 
 function getReplaysPath(dotaPath) {
@@ -69,4 +128,4 @@ function resolveDotaPath(picked) {
   return null;
 }
 
-module.exports = { getDotaPath, getReplaysPath, isDotaRoot, resolveDotaPath };
+module.exports = { getDotaPath, findDota, getReplaysPath, isDotaRoot, resolveDotaPath };

@@ -11,14 +11,16 @@ const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
 const crypto = require('node:crypto');
+const os = require('node:os');
 const Store = require('electron-store');
 const { autoUpdater } = require('electron-updater');
 
 const { startWatcher, stopWatcher } = require('./file-watcher');
 const { parseReplay } = require('./parser-runner');
 const { uploadToReso, saveForRetry, retryPending, RESO_DEFAULT_URL } = require('./uploader');
-const { getDotaPath, getReplaysPath, isDotaRoot, resolveDotaPath } = require('./dota-integration');
+const { findDota, getReplaysPath, isDotaRoot, resolveDotaPath } = require('./dota-integration');
 const { nudgeText, isDotaRunning, createNudge } = require('./update-nudge');
+const { buildReport, createReporter, sendReport } = require('./report');
 
 const pendingDir = () => path.join(app.getPath('userData'), 'pending');
 
@@ -53,6 +55,7 @@ function pushLog(level, message) {
   if (log.length > 200) log.shift();
   console.log(`[${level}] ${message}`);
   emit('log', entry);
+  if (level === 'warn' || level === 'error') reporter.report(level);
 }
 
 function emit(name, payload) {
@@ -60,6 +63,46 @@ function emit(name, payload) {
     mainWindow.webContents.send('app-event', { name, payload });
   }
 }
+
+// === Diagnostics report ===
+// A linked companion sends its state and log tail to the site at start, after
+// a Steam link and on warn/error (at most once per 10 minutes). report.js
+// never logs through pushLog, so a failing send cannot loop.
+let lastLooked = []; // places the startup Dota search checked
+
+function installId() {
+  let id = store.get('installId');
+  if (typeof id !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(id)) {
+    id = crypto.randomUUID();
+    store.set('installId', id);
+  }
+  return id;
+}
+
+function sendDiagnostics(reason) {
+  const dotaPath = store.get('dotaPath') || null;
+  const body = buildReport({
+    installId: installId(),
+    reason,
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    osRelease: os.release(),
+    dota: { path: dotaPath, replays: dotaPath ? countReplays(getReplaysPath(dotaPath)) : null },
+    looked: lastLooked,
+    watcher: stats.watcherActive,
+    stats: {
+      today: stats.uploadsToday,
+      total: stats.totalUploads,
+      failures: stats.totalFailures,
+      lastUploadAt: stats.lastUploadAt,
+    },
+    log,
+  });
+  return sendReport({ resoUrl: store.get('resoUrl'), resoToken: store.get('resoToken'), body });
+}
+
+const reporter = createReporter({ send: sendDiagnostics });
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -336,6 +379,7 @@ ipcMain.handle('steam-login', () => {
         '<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;background:#262624;color:#eceae4;text-align:center;padding-top:80px"><h2 style="color:#e06c4c">Готово ✓</h2><p>Аккаунт связан с app.reso.coach. Можешь закрыть вкладку.</p></body>',
       );
       pushLog('info', 'app.reso.coach: аккаунт связан (Steam)');
+      reporter.report('link');
       emit('reso-linked', { linked: true });
       retryPendingUploads('после привязки');
       done({ ok: true });
@@ -581,7 +625,9 @@ app.whenReady().then(() => {
 
   // Auto-detect Dota path if not set
   if (!dotaPath) {
-    dotaPath = getDotaPath();
+    const found = findDota();
+    lastLooked = found.looked;
+    dotaPath = found.path;
     if (dotaPath) {
       store.set('dotaPath', dotaPath);
       pushLog('info', `Dota 2 найдена: ${dotaPath}`);
@@ -591,6 +637,7 @@ app.whenReady().then(() => {
   }
 
   if (dotaPath) watchDota(dotaPath);
+  reporter.report('start');
 
   if (store.get('autoStart')) {
     app.setLoginItemSettings({ openAtLogin: true });
