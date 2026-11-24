@@ -173,7 +173,8 @@
         <strong style="font-size: 14px">Не нашёл Доту</strong>
         <div class="small">Выбери папку «dota 2 beta». В Steam: Dota 2 → Управление → Просмотреть локальные файлы.</div>
         <div class="row" style="margin-top: 10px">
-          <button id="pickDotaCard">Выбрать папку</button>
+          <button id="pickDotaCard" style="flex-shrink: 0">Выбрать папку</button>
+          <span id="dotaMsg" class="status"></span>
         </div>
       </div>
 
@@ -249,8 +250,9 @@
       const $ = (id) => document.getElementById(id);
 
       let msgTimer = null;
-      function setMsg(text, kind) {
-        const el = $('msg');
+      // `target`: where the message shows — the «Не нашёл Доту» card answers in its own row
+      function setMsg(text, kind, target = 'msg') {
+        const el = $(target);
         el.textContent = text;
         el.className = 'badge ' + (kind === 'ok' ? 'badge-ok' : kind === 'err' ? 'badge-err' : 'badge-warn');
         clearTimeout(msgTimer); // a stale timer must not wipe a newer message
@@ -304,11 +306,14 @@
         refresh();
       };
 
-      $('pickDota').onclick = $('pickDotaCard').onclick = async () => {
+      const pickDota = (target) => async () => {
         const r = await window.api.selectDotaFolder();
+        // the card hides itself once a folder is set: «Папка выбрана» shows at the top, as from the settings
         if (r.ok) { $('dotaPath').value = r.dotaPath; setMsg('Папка выбрана', 'ok'); refresh(); }
-        else if (r.error) setMsg(r.error, 'err');
+        else if (r.error) setMsg(r.error, 'err', target);
       };
+      $('pickDota').onclick = pickDota('msg');
+      $('pickDotaCard').onclick = pickDota('dotaMsg');
 
       $('steamLogin').onclick = async () => {
         setMsg('Открываю Steam-логин в браузере…', 'warn');
